@@ -52,7 +52,7 @@ static NSString *const UPDATE_ITEM_SQL = @"REPLACE INTO %@ (id, json, createdTim
 
 static NSString *const QUERY_ITEM_SQL = @"SELECT json, createdTime from %@ where id = ? Limit 1";
 
-static NSString *const SELECT_ALL_SQL = @"SELECT * from %@";
+static NSString *const SELECT_ALL_SQL = @"SELECT * from %@ ORDER BY %@ DESC";
 
 static NSString *const CLEAR_ALL_SQL = @"DELETE from %@";
 
@@ -227,7 +227,7 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     if ([YTKKeyValueStore checkTableName:tableName] == NO) {
         return nil;
     }
-    NSString * sql = [NSString stringWithFormat:SELECT_ALL_SQL, tableName];
+    NSString * sql = [NSString stringWithFormat:SELECT_ALL_SQL, tableName, @"id"];
     __block NSMutableArray * result = [NSMutableArray array];
     [_dbQueue inDatabase:^(FMDatabase *db) {
         FMResultSet * rs = [db executeQuery:sql];
