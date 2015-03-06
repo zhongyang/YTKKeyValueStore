@@ -49,12 +49,19 @@ PRIMARY KEY(id)) \
 ";
 
 static NSString *const UPDATE_ITEM_SQL = @"REPLACE INTO %@ (id, json, createdTime) values (?, ?, ?)";
+static NSString *const REAL_UPDATE_ITEM_SQL = @"UPDATE %@ SET json = ? WHERE id = ?";
 
 static NSString *const QUERY_ITEM_SQL = @"SELECT json, createdTime from %@ where id = ? Limit 1";
 
-static NSString *const SELECT_ALL_SQL = @"SELECT * from %@ ORDER BY %@ DESC";
+static NSString *const SELECT_ALL_SQL = @"SELECT * from %@";
+
+static NSString *const GET_TABLE_COUNT = @"SELECT COUNT(*) FROM %@";
+
+static NSString *const GET_LAST_ITEMS_SQL = @"SELECT * from %@ Limit %ld Offset %ld";
 
 static NSString *const CLEAR_ALL_SQL = @"DELETE from %@";
+
+static NSString *const DELETE_TABLE = @"DROP TABLE %@";
 
 static NSString *const DELETE_ITEM_SQL = @"DELETE from %@ where id = ?";
 
@@ -127,6 +134,20 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     }
 }
 
+- (void)deleteTable:(NSString *)tableName {
+    if ([YTKKeyValueStore checkTableName:tableName] == NO) {
+        return;
+    }
+    NSString * sql = [NSString stringWithFormat:DELETE_TABLE, tableName];
+    __block BOOL result;
+    [_dbQueue inDatabase:^(FMDatabase *db) {
+        result = [db executeUpdate:sql];
+    }];
+    if (!result) {
+        debugLog(@"ERROR, failed to clear table: %@", tableName);
+    }
+}
+
 - (void)putObject:(id)object withId:(NSString *)objectId intoTable:(NSString *)tableName {
     if ([YTKKeyValueStore checkTableName:tableName] == NO) {
         return;
@@ -143,6 +164,27 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     __block BOOL result;
     [_dbQueue inDatabase:^(FMDatabase *db) {
         result = [db executeUpdate:sql, objectId, jsonString, createdTime];
+    }];
+    if (!result) {
+        debugLog(@"ERROR, failed to insert/replace into table: %@", tableName);
+    }
+}
+
+- (void)updateObject:(id)object withId:(NSString *)objectId withTime:(id)time intoTable:(NSString *)tableName {
+    if ([YTKKeyValueStore checkTableName:tableName] == NO) {
+        return;
+    }
+    NSError * error;
+    NSData * data = [NSJSONSerialization dataWithJSONObject:object options:0 error:&error];
+    if (error) {
+        debugLog(@"ERROR, faild to get json data");
+        return;
+    }
+    NSString * jsonString = [[NSString alloc] initWithData:data encoding:(NSUTF8StringEncoding)];
+    NSString * sql = [NSString stringWithFormat:REAL_UPDATE_ITEM_SQL, tableName];
+    __block BOOL result;
+    [_dbQueue inDatabase:^(FMDatabase *db) {
+        result = [db executeUpdate:sql, jsonString, objectId];
     }];
     if (!result) {
         debugLog(@"ERROR, failed to insert/replace into table: %@", tableName);
@@ -199,6 +241,18 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     [self putObject:@[string] withId:stringId intoTable:tableName];
 }
 
+- (void)updateString:(NSString *)string withId:(NSString *)stringId intoTable:(NSString *)tableName {
+    if (string == nil) {
+        debugLog(@"error, string is nil");
+        return;
+    }
+
+    YTKKeyValueItem *item = [self getYTKKeyValueItemById:stringId fromTable:tableName];
+    if (item) {
+        [self updateObject:@[string] withId:stringId withTime:@[item.createdTime] intoTable:tableName];
+    }
+}
+
 - (NSString *)getStringById:(NSString *)stringId fromTable:(NSString *)tableName {
     NSArray * array = [self getObjectById:stringId fromTable:tableName];
     if (array && [array isKindOfClass:[NSArray class]]) {
@@ -223,11 +277,63 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     return nil;
 }
 
+- (NSNumber *)getAllItemsCountFromTable:(NSString *)tableName {
+    if ([YTKKeyValueStore checkTableName:tableName] == NO) {
+        return nil;
+    }
+
+    __block NSNumber *totalCount = nil;
+    NSString * sql = [NSString stringWithFormat:GET_TABLE_COUNT, tableName];
+    [_dbQueue inDatabase:^(FMDatabase *db) {
+        FMResultSet * rs = [db executeQuery:sql];
+        if ([rs next]) {
+            totalCount = [NSNumber numberWithLong:[rs longForColumnIndex:0]];
+        }
+        [rs close];
+    }];
+
+    return totalCount;
+}
+
+- (NSArray *)getLastItemsFromTable:(NSString *)tableName begin:(long)beginIndex end:(long)endIndex {
+    if ([YTKKeyValueStore checkTableName:tableName] == NO) {
+        return nil;
+    }
+
+    NSString * sql = [NSString stringWithFormat:GET_LAST_ITEMS_SQL, tableName, (endIndex-beginIndex)+1, beginIndex];
+    __block NSMutableArray * result = [NSMutableArray array];
+    [_dbQueue inDatabase:^(FMDatabase *db) {
+        FMResultSet * rs = [db executeQuery:sql];
+        while ([rs next]) {
+            YTKKeyValueItem * item = [[YTKKeyValueItem alloc] init];
+            item.itemId = [rs stringForColumn:@"id"];
+            item.itemObject = [rs stringForColumn:@"json"];
+            item.createdTime = [rs dateForColumn:@"createdTime"];
+            [result addObject:item];
+        }
+        [rs close];
+    }];
+    // parse json string to object
+    NSError * error;
+    for (YTKKeyValueItem * item in result) {
+        error = nil;
+        id object = [NSJSONSerialization JSONObjectWithData:[item.itemObject dataUsingEncoding:NSUTF8StringEncoding]
+                                                    options:(NSJSONReadingAllowFragments) error:&error];
+        if (error) {
+            debugLog(@"ERROR, faild to prase to json.");
+        } else {
+            item.itemObject = object;
+        }
+    }
+    return result;
+}
+
+
 - (NSArray *)getAllItemsFromTable:(NSString *)tableName {
     if ([YTKKeyValueStore checkTableName:tableName] == NO) {
         return nil;
     }
-    NSString * sql = [NSString stringWithFormat:SELECT_ALL_SQL, tableName, @"id"];
+    NSString * sql = [NSString stringWithFormat:SELECT_ALL_SQL, tableName];
     __block NSMutableArray * result = [NSMutableArray array];
     [_dbQueue inDatabase:^(FMDatabase *db) {
         FMResultSet * rs = [db executeQuery:sql];
@@ -306,6 +412,10 @@ static NSString *const DELETE_ITEMS_WITH_PREFIX_SQL = @"DELETE from %@ where id 
     if (!result) {
         debugLog(@"ERROR, failed to delete items by id prefix from table: %@", tableName);
     }
+}
+
+- (void)dosomethingInTransaction {
+    
 }
 
 - (void)close {

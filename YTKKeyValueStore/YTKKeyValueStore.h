@@ -27,17 +27,21 @@
 
 - (void)clearTable:(NSString *)tableName;
 
+- (void)deleteTable:(NSString *)tableName;
+
 - (void)close;
 
 ///************************ Put&Get methods *****************************************
 
 - (void)putObject:(id)object withId:(NSString *)objectId intoTable:(NSString *)tableName;
+- (void)updateObject:(id)object withId:(NSString *)objectId withTime:(id)time intoTable:(NSString *)tableName;
 
 - (id)getObjectById:(NSString *)objectId fromTable:(NSString *)tableName;
 
 - (YTKKeyValueItem *)getYTKKeyValueItemById:(NSString *)objectId fromTable:(NSString *)tableName;
 
 - (void)putString:(NSString *)string withId:(NSString *)stringId intoTable:(NSString *)tableName;
+- (void)updateString:(NSString *)string withId:(NSString *)stringId intoTable:(NSString *)tableName ;
 
 - (NSString *)getStringById:(NSString *)stringId fromTable:(NSString *)tableName;
 
@@ -53,5 +57,8 @@
 
 - (void)deleteObjectsByIdPrefix:(NSString *)objectIdPrefix fromTable:(NSString *)tableName;
 
+
+- (NSNumber *)getAllItemsCountFromTable:(NSString *)tableName;
+- (NSArray *)getLastItemsFromTable:(NSString *)tableName begin:(long)beginIndex end:(long)endIndex;
 
 @end
